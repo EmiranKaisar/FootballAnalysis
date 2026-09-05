@@ -1,0 +1,9 @@
+# Private match footage and generated analysis artifacts
+data/private/
+data/output/
+.venv/
+__pycache__/
+*.py[cod]
+*.pt
+models/manifest.json
+.streamlit/

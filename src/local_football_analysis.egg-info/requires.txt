@@ -1,0 +1,10 @@
+huggingface-hub<2,>=0.34
+lap<1,>=0.5.12
+numpy<3,>=2.0
+opencv-python<5,>=4.10
+streamlit<2,>=1.46
+torch<3,>=2.7
+ultralytics<9,>=8.3
+
+[dev]
+pytest<9,>=8.3

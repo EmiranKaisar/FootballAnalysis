@@ -1,0 +1,3 @@
+# Keep analysis on the local machine
+
+The demo will run video processing and model inference entirely on the user's machine after its initial model setup. Match footage and derived artifacts will not be uploaded externally or committed to the repository; real-video validation will begin only when the user supplies a private local clip. This accepts slower processing on the available Apple M1 hardware in exchange for keeping match footage private, avoiding hosted inference credentials and usage costs, and making the demo self-contained; a future hosted product may replace this execution boundary.
