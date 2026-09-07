@@ -92,6 +92,14 @@ _Avoid_: Annotated output video, official match report
 The temporary association between one uploaded analysis clip, its calibration choices, and its analysis result while the local demo is running. It is not a persistent match record.
 _Avoid_: Saved match, analysis history
 
+**Analysis Range**:
+A user-selected, clip-relative interval of at least thirty seconds within a completed full-clip analysis. Its start is included and its end is excluded unless the end coincides with the physical end of the clip. It derives a report from already analyzed evidence and never causes the clip to be analyzed again.
+_Avoid_: Playback range, trimmed clip, reanalysis window
+
+**Range-Filtered Analysis Report**:
+An Analysis Result view whose events and duration-based estimates are limited to an Analysis Range while retaining timestamps relative to the original clip.
+_Avoid_: New analysis, excerpt timeline
+
 **Clip Suitability**:
 The pre-analysis assessment of whether a video satisfies the analysis-clip boundary and contains enough visible evidence for meaningful estimates. An unsuitable clip is rejected with reasons; a marginal clip may proceed with explicit warnings.
 _Avoid_: Analysis accuracy, model confidence

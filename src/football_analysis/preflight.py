@@ -59,8 +59,8 @@ def inspect_video(path: str | Path, sample_count: int = 12) -> PreflightReport:
         report.errors.append("The video has invalid or unreadable stream metadata.")
     if duration > 120.5:
         report.errors.append(f"Clip duration is {duration:.1f}s; the limit is 120s.")
-    if duration < 2:
-        report.errors.append("Clip must contain at least two seconds of play.")
+    if duration < 30:
+        report.errors.append("Clip must contain at least 30 seconds of play.")
     if width < 640 or height < 360:
         report.errors.append(f"Resolution {width}×{height} is below the supported minimum 640×360.")
     if fps and not 20 <= fps <= 60:
@@ -87,4 +87,3 @@ def inspect_video(path: str | Path, sample_count: int = 12) -> PreflightReport:
     if len(report.sampled_frames) < min(3, sample_count):
         report.errors.append("Too few frames could be decoded for analysis.")
     return report
-

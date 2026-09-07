@@ -94,6 +94,7 @@ def analyze_video(
                 continue
 
             timestamp = frame_index / source_fps
+            result.analyzed_timestamps.append(timestamp)
             objects = tracker.track(frame)
             players: list[PlayerState] = []
             for tracked in objects:
@@ -146,6 +147,7 @@ def analyze_video(
     result.events = engine.events
     result.controlled_seconds = engine.possession_seconds
     result.eligible_seconds = engine.eligible_seconds
+    result.intervals = engine.intervals
     result.warnings.append(
         "Shot-on-target detection currently confirms visible goalkeeper saves; "
         "goals without a tracked terminal ball may remain unknown."

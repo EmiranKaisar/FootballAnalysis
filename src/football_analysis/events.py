@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from math import hypot
 
 from .detection import TrackedObject
-from .domain import Event, EventType, Outcome, Team
+from .domain import AnalysisInterval, Event, EventType, Outcome, Team
 
 
 @dataclass(frozen=True)
@@ -46,6 +46,7 @@ class EventEngine:
         self.pending: PendingRelease | None = None
         self.possession_seconds = {Team.A: 0.0, Team.B: 0.0}
         self.eligible_seconds = 0.0
+        self.intervals: list[AnalysisInterval] = []
         self.last_timestamp: float | None = None
         self.shot_cooldown_until = 0.0
 
@@ -207,6 +208,10 @@ class EventEngine:
                 possession_team = self.pending.team
         if possession_team is not None:
             self.possession_seconds[possession_team] += dt
+        if dt > 0:
+            self.intervals.append(
+                AnalysisInterval(timestamp - dt, timestamp, possession_team, eligible=True)
+            )
 
     def finish(self, timestamp: float) -> None:
         self._finish_pending(timestamp + 3.1, None, None)

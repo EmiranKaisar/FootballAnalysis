@@ -4,13 +4,13 @@ A private, on-device proof of concept that estimates team-level shots, shots on 
 
 ## Scope
 
-- MP4 clips up to two minutes
+- MP4 clips from 30 seconds through two minutes
 - Fixed or smoothly moving wide-angle tactical camera
 - Team-level estimates; no player identification
 - Local processing after the initial model download
-- JSON and CSV results; no annotated-video rendering
+- Interactive full-clip and range-filtered reports; no annotated-video rendering
 
-See [`CONTEXT.md`](./CONTEXT.md) for the precise football terms and `docs/adr/` for architectural decisions.
+See [`DESIGN.md`](./DESIGN.md) for the complete product design, [`CONTEXT.md`](./CONTEXT.md) for precise domain terms, and `docs/adr/` for architectural decisions.
 
 ## Setup
 
