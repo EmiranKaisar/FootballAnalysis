@@ -339,7 +339,7 @@ def reset_analysis_range(widget_key: str, options: tuple[float, ...]) -> None:
     st.session_state[generation_key] = st.session_state.get(generation_key, 0) + 1
 
 
-def render_result(result: AnalysisResult, video_path: Path) -> None:
+def render_result(result: AnalysisResult) -> None:
     st.success("Estimated analysis complete")
     st.header(
         "Analysis report · "
@@ -371,13 +371,6 @@ def render_result(result: AnalysisResult, video_path: Path) -> None:
     st.subheader("Estimated event timeline")
     if rows:
         st.table(rows)
-        labels = [
-            f'{event.timestamp_seconds:06.2f}s · {result.team_names[event.team]} · '
-            f'{event.event_type.value} · {event.outcome.value}'
-            for event in result.events
-        ]
-        selected = st.selectbox("Review an event", range(len(labels)), format_func=lambda index: labels[index])
-        st.video(str(video_path), start_time=max(0, int(result.events[selected].timestamp_seconds) - 2))
     else:
         st.info("No events met the conservative detection rules in this clip.")
 
@@ -482,8 +475,15 @@ for warning in report.warnings:
 if not report.suitable:
     st.stop()
 
-with st.expander("Preview", expanded=False):
-    st.video(str(video_path))
+frame = first_frame(video_path)
+if frame is not None:
+    st.image(
+        cv2.cvtColor(frame, cv2.COLOR_BGR2RGB),
+        caption=f"{video_path.name} · opening frame",
+        width=360,
+    )
+else:
+    st.warning("Opening-frame preview unavailable. You can continue with calibration and analysis.")
 
 st.header("Calibration")
 model_path = st.text_input(
@@ -519,10 +519,6 @@ if st.button("Suggest jersey colors from the clip"):
         st.success("Suggested colors are ready; confirm or correct them below.")
     else:
         st.warning("Not enough player crops were found. Choose the colors manually.")
-
-frame = first_frame(video_path)
-if frame is not None:
-    st.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), caption="Opening frame for calibration", width="stretch")
 
 left, right = st.columns(2)
 with left:
@@ -569,7 +565,7 @@ def job_panel() -> None:
         widget_key, options = initialize_analysis_range(result, job.job_id)
         start_seconds, end_seconds = st.session_state[widget_key]
         filtered_result = result.filtered(start_seconds, end_seconds)
-        render_result(filtered_result, job.video_path)
+        render_result(filtered_result)
         render_analysis_range_selector(widget_key, options)
     elif stage == "failed":
         st.error(error or "Analysis failed")

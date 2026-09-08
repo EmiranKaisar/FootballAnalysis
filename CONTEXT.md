@@ -8,6 +8,10 @@ This context defines the football concepts used by the local video-analysis demo
 A continuous live-play segment of no more than two minutes from a fixed or smoothly panning/zooming wide-angle tactical camera, in which most active players, the ball, and enough pitch markings for calibration are normally visible. The demo does not accept cuts, abrupt viewpoint changes, broadcast replays, or close-up edits as analysis clips.
 _Avoid_: Broadcast clip, arbitrary match video
 
+**Clip Preview**:
+A single small, static image of the analysis clip's opening frame, shown after preflight so the user can confirm the selected clip without playing it.
+_Avoid_: Video preview, preview player, event-review player
+
 **Team-Level Analysis**:
 Statistics and timestamped events attributed to one of the two teams without asserting a real-world player identity. Temporary tracks may support classification but are not part of the promised result.
 _Avoid_: Player analysis, player identification
