@@ -1,10 +1,10 @@
 # Local Football Analysis Demo
 
-A private, on-device proof of concept that estimates team-level shots, shots on target, passes, pass success, and possession from short tactical-camera football clips.
+A private, on-device proof of concept that estimates team-level shots, shots on target, passes, pass success, and possession from continuous tactical-camera football clips.
 
 ## Scope
 
-- MP4 clips from 30 seconds through two minutes
+- MP4 clips from 30 seconds through 20 minutes, up to 4 GB
 - Fixed or smoothly moving wide-angle tactical camera
 - Team-level estimates; no player identification
 - Local processing after the initial model download
@@ -12,11 +12,32 @@ A private, on-device proof of concept that estimates team-level shots, shots on 
 
 See [`DESIGN.md`](./DESIGN.md) for the complete product design, [`CONTEXT.md`](./CONTEXT.md) for precise domain terms, and `docs/adr/` for architectural decisions.
 
+## Twenty-minute analysis
+
+The video is not physically split or independently analyzed. OpenCV decodes one source sequentially, and the models receive one sampled frame at a time. The application organizes the work into ten logical two-minute progress units while preserving one continuous tracker and event engine across every boundary.
+
+At the current target of approximately eight analyzed frames per second, a 20-minute clip produces roughly 9,600 analyzed frames and approximately 19,200 inference calls when both reference detectors are enabled. Logical work units improve progress reporting, cancellation, diagnostics, and resource control; they do not reduce the total inference work.
+
+The 20-minute implementation:
+
+- accepts clips from 30 seconds through 20 minutes;
+- requires one continuous segment from a single match half, without a halftime or attacking-direction change;
+- retains the current approximately 8 FPS analysis target until benchmark and accuracy evidence supports changing it;
+- allows only one active inference job per local server;
+- reports elapsed clip time, logical work-unit count, measured throughput, device, and estimated time remaining;
+- uses duration-aware, memory-bounded preflight sampling;
+- accepts files up to 4 GB and configures Streamlit's upload/message limits accordingly;
+- preserves tracker, pending-event, ball-history, and possession state across logical boundaries;
+- keeps the completed full-clip evidence available for immediate range filtering without reanalysis; and
+- does not promise resume after a Streamlit or machine restart in the first version.
+
+Large browser uploads may temporarily require substantial memory and an additional local copy. Placing a clip directly in `data/private/input/` is the preferred path for multi-gigabyte files. Before copying an upload, the application verifies free space for the file plus a 512 MB reserve, writes atomically, and removes inactive uploaded session files after seven days. Completed job records are bounded to the most recent 16 per local server process.
+
 ## Requirements
 
 - Python 3.12 (other Python versions are not supported)
 - An internet connection for dependency installation and the first model download
-- A local MP4 clip between 30 seconds and two minutes
+- A local MP4 clip from 30 seconds through 20 minutes and no larger than 4 GB
 
 ## Setup on macOS
 
@@ -97,6 +118,12 @@ Put private clips under `data/private/input/`; this directory is ignored by Git.
 ```bash
 source .venv/bin/activate
 streamlit run app.py
+```
+
+To stop the server, return to the terminal where it is running and press **Control+C** (`Ctrl+C`). If that terminal does not respond, open another terminal in the project directory and run:
+
+```bash
+pkill -f "streamlit run app.py"
 ```
 
 Optional local diagnostic:

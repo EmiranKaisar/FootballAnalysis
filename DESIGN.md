@@ -2,7 +2,7 @@
 
 ## Product intent
 
-Local Football Analysis is a private, on-device proof of concept for reviewing team-level football activity in a short tactical-camera clip. It produces inspectable estimates rather than official match statistics. The first version favors conservative, explainable results over broad footage support or player identification.
+Local Football Analysis is a private, on-device proof of concept for reviewing team-level football activity in a continuous tactical-camera clip of up to 20 minutes. It produces inspectable estimates rather than official match statistics. The first version favors conservative, explainable results over broad footage support or player identification.
 
 ## Goals
 
@@ -10,6 +10,7 @@ Local Football Analysis is a private, on-device proof of concept for reviewing t
 - Keep private footage and derived analysis on the user's computer.
 - Let the user inspect estimated events at their original clip-relative timestamps.
 - Let the user inspect any valid 30-second-or-longer portion of a completed analysis without rerunning model inference.
+- Process a valid 20-minute clip as one continuous analysis without requiring the user to split it.
 - Make uncertainty and unsuitable evidence visible rather than silently guessing.
 
 ## Non-goals
@@ -19,19 +20,23 @@ Local Football Analysis is a private, on-device proof of concept for reviewing t
 - Supporting broadcast edits, replays, close-ups, abrupt camera cuts, or arbitrary match videos.
 - Rendering an annotated output video.
 - Persisting an analysis history.
+- Resuming an interrupted analysis after a server or machine restart in the first 20-minute release.
+- Analyzing across halftime or another change in attacking direction.
 - Exporting JSON or CSV in the current interface.
 
 ## Supported input
 
 The product accepts one MP4 **Analysis Clip** at a time. A valid clip:
 
-- lasts from 30 through 120 seconds;
+- lasts from 30 through 1,200 seconds;
+- falls within one match half and does not contain a change in attacking direction;
+- is no larger than 4 GB;
 - has a resolution of at least 640×360;
 - uses a fixed or smoothly moving wide-angle tactical view;
 - is continuous live play without cuts, replays, or close-up edits; and
 - normally shows most active players, the ball, and enough pitch markings for useful inference.
 
-Preflight rejects unreadable files, unsupported formats, invalid metadata, clips outside the duration boundary, and undersized video. It warns about unusual frame rates and probable viewpoint cuts. Rejected clips are not analyzed.
+Preflight rejects unreadable files, unsupported formats, invalid metadata, clips outside the duration or file-size boundary, and undersized video. It warns about unusual frame rates, probable viewpoint cuts, and evidence suggesting an attacking-direction change. Sampling adapts to clip duration and retains only a bounded set of full-resolution frames; cut inspection retains compact derived evidence rather than every sampled image. Rejected clips are not analyzed.
 
 ## Primary workflow
 
@@ -41,13 +46,34 @@ Preflight rejects unreadable files, unsupported formats, invalid metadata, clips
    - confirms a name and jersey color for each team;
    - confirms opposite attacking directions; and
    - optionally accepts locally generated jersey-color suggestions.
-4. The user starts analysis. The application processes the entire clip once, showing stage progress and allowing cancellation.
+4. The user starts analysis. The application processes the entire clip once, showing elapsed clip time, logical work-unit progress, measured throughput, device, estimated time remaining, and a cancellation control.
 5. The completed Analysis Report presents team metrics, quality information, and a timestamped estimated-event timeline.
 6. An Analysis Range Selector below the report lets the user derive a filtered report from cached, time-indexed full-clip evidence. Moving the selector never reruns inference and never seeks the video.
 
 ## Analysis behavior
 
 The application samples the source at a target analysis rate and uses replaceable local object trackers for players, goalkeepers, and the ball. User-confirmed jersey appearance classifies temporary player tracks by team. An explicit temporal state machine derives possession intervals and estimated passes and shots.
+
+The initial 20-minute implementation retains an analysis target of approximately eight frames per second. A maximum-duration clip therefore produces roughly 9,600 analyzed frames and, with both reference detectors enabled, approximately 19,200 inference calls. This target may change only after representative CPU, Metal, and CUDA benchmarks assess both processing time and event-quality impact.
+
+### Long-clip processing
+
+The product never requires the user to split an Analysis Clip. It opens one source through a continuous decoder and presents individual sampled frames to the trackers. For progress and operational control, the 20-minute job is divided into ten logical two-minute work units; these are not separate media files or independent analyses.
+
+One tracker, classifier, and event engine remain alive for the complete clip. Logical boundaries must not reset or discard:
+
+- ByteTrack tracking state;
+- the current controller, team, or control candidate;
+- pending pass or shot evidence;
+- ball history, the last detected ball, or the short missing-ball bridge;
+- possession accumulation and interval continuity; or
+- shot cooldown and original clip-relative timestamps.
+
+This continuity allows an event beginning before a logical boundary and resolving after it to be reported exactly once. Logical work units provide progress reporting, cancellation points, bounded diagnostic flushing, and performance measurement, but do not reduce inference work.
+
+Only one inference job may be active per local server. A new request is rejected or queued while another job owns the worker, and repeated submissions from the same session cannot create duplicate work. Completed, failed, cancelled, and abandoned jobs are removed according to a bounded cleanup policy.
+
+The first 20-minute release uses one continuous in-memory run and does not promise restart recovery. Later resume support may restart before the latest completed boundary, warm tracking state over an overlap, and deduplicate boundary evidence; that behavior requires a separate design decision and acceptance criteria.
 
 ### Reference models and replacement boundary
 
@@ -142,11 +168,11 @@ The original full-clip result remains available in memory so resetting the selec
 
 ## Progress, cancellation, and failures
 
-Analysis runs as a local background job. The interface reports its current stage and progress. Cancellation finishes the current model frame, then stops the job and reports cancellation. Failures are shown locally without remote error logging. The range selector is unavailable for queued, running, failed, or cancelled jobs.
+Analysis runs as a local background job. During inference, the interface reports elapsed source time, total source duration, current two-minute logical work unit, measured analyzed frames per second, selected device, and an estimated completion time derived from the current run. Cancellation finishes the current model frame, releases decoder and model-job resources, then reports cancellation. Failures are shown locally without remote error logging. Partial diagnostic state may be retained for troubleshooting, but it is not presented as a completed Analysis Result. The range selector is unavailable for queued, running, failed, or cancelled jobs.
 
 ## Privacy and storage
 
-After initial model setup, inference and video processing occur locally. Uploaded clips are copied to the ignored private-input directory. Match footage and derived artifacts must not be committed to the repository or uploaded by the application. An Analysis Session is temporary and is not a saved match or analysis-history record.
+After initial model setup, inference and video processing occur locally. Uploaded clips are copied to the ignored private-input directory only after file-size and available-disk checks succeed. Multi-gigabyte clips placed directly in the private-input directory avoid browser-upload duplication and are the preferred local-server workflow. Match footage and derived artifacts must not be committed to the repository or uploaded by the application. Temporary, abandoned, and superseded uploads are removed according to a documented age and ownership policy. An Analysis Session is temporary and is not a saved match or analysis-history record.
 
 ## Accessibility and interaction quality
 
@@ -183,6 +209,22 @@ After initial model setup, inference and video processing occur locally. Uploade
 - Unsupported class names are ignored rather than silently mapped to an unrelated analysis object.
 - A non-Ultralytics provider can be tested by injecting an `ObjectTracker` implementation that returns the canonical tracker output.
 - Documentation identifies the exact reference repositories, pinned model revision or release, replacement contract, and third-party licensing boundary.
+
+## Acceptance criteria for 20-minute analysis
+
+- A valid clip lasting exactly 20 minutes is accepted; a clip beyond the defined metadata tolerance is rejected.
+- The complete source is decoded continuously and is not physically divided into temporary video files.
+- The interface reports ten logical two-minute work units while tracker and event-engine state reset only once, before the full analysis.
+- A pass, shot, ball-history window, or possession interval crossing a logical boundary remains continuous and is counted exactly once.
+- Approximately eight source frames per second are analyzed until benchmark and accuracy evidence authorizes another rate.
+- Only one inference job can own the local worker, and repeated submissions do not create duplicate jobs.
+- Progress includes elapsed source time, logical work-unit count, measured throughput, selected device, and estimated time remaining.
+- Cancellation releases the video decoder and job resources after the current model frame.
+- Preflight sampling remains memory-bounded as duration increases and covers the full 20-minute source.
+- A completed 20-minute result supports immediate Analysis Range filtering without invoking either model again.
+- Browser interaction with approximately 9,600 analyzed timestamps remains responsive.
+- Clean-machine testing covers representative CPU, Metal, and CUDA systems, multi-gigabyte input, insufficient disk space, cancellation, and server interruption.
+- Restart resume is not advertised in the first 20-minute release.
 
 ## Related domain and architecture documents
 

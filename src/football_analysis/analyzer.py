@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import ceil
 from pathlib import Path
 from threading import Event as CancelEvent
+from time import monotonic
 from typing import Callable
 
 import cv2
@@ -14,6 +16,8 @@ from .preflight import inspect_video
 from .teams import TeamClassifier
 
 ProgressCallback = Callable[[str, float, str], None]
+LOGICAL_UNIT_SECONDS = 120.0
+MAX_LOGICAL_UNITS = 10
 
 
 @dataclass(frozen=True)
@@ -31,6 +35,26 @@ class AnalysisConfig:
 def _notify(callback: ProgressCallback | None, stage: str, progress: float, message: str) -> None:
     if callback:
         callback(stage, min(1.0, max(0.0, progress)), message)
+
+
+def _format_clock(seconds: float) -> str:
+    total_seconds = max(0, int(round(seconds)))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours:d}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes:02d}:{seconds:02d}"
+
+
+def _device_label(tracker: ObjectTracker) -> str:
+    device = str(getattr(tracker, "device", "custom")).lower()
+    if device.startswith("mps"):
+        return "Metal"
+    if device.startswith("cuda"):
+        return "CUDA"
+    if device.startswith("cpu"):
+        return "CPU"
+    return device or "custom"
 
 
 def analyze_video(
@@ -81,7 +105,19 @@ def analyze_video(
     frames_with_players = 0
     last_detected_ball: TrackedObject | None = None
     last_ball_timestamp: float | None = None
-    _notify(progress, "analysis", 0.08, "Tracking players and ball")
+    analysis_started = monotonic()
+    total_units = min(
+        MAX_LOGICAL_UNITS,
+        max(1, ceil(metadata.duration_seconds / LOGICAL_UNIT_SECONDS)),
+    )
+    device_label = _device_label(tracker)
+    _notify(
+        progress,
+        "analysis",
+        0.08,
+        f"00:00/{_format_clock(metadata.duration_seconds)} · unit 1/{total_units} · "
+        f"starting · {device_label}",
+    )
     try:
         while capture.isOpened():
             if cancel is not None and cancel.is_set():
@@ -138,7 +174,17 @@ def analyze_video(
 
             ratio = frame_index / max(1, metadata.frame_count)
             if result.analyzed_frames % 10 == 0:
-                _notify(progress, "analysis", 0.08 + 0.88 * ratio, f"Analyzed {timestamp:.1f}s")
+                wall_elapsed = max(0.001, monotonic() - analysis_started)
+                throughput = result.analyzed_frames / wall_elapsed
+                remaining_frames = max(0, metadata.frame_count - frame_index) / frame_step
+                eta_seconds = remaining_frames / throughput if throughput > 0 else 0.0
+                unit = min(total_units, int(timestamp // LOGICAL_UNIT_SECONDS) + 1)
+                message = (
+                    f"{_format_clock(timestamp)}/{_format_clock(metadata.duration_seconds)} · "
+                    f"unit {unit}/{total_units} · {throughput:.1f} fps · {device_label} · "
+                    f"ETA {_format_clock(eta_seconds)}"
+                )
+                _notify(progress, "analysis", 0.08 + 0.88 * ratio, message)
             frame_index += 1
     finally:
         capture.release()

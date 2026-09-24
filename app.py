@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,7 +14,8 @@ from streamlit.components.v2 import component
 from football_analysis.analyzer import AnalysisConfig, analyze_video
 from football_analysis.detection import UltralyticsTracker
 from football_analysis.domain import AnalysisResult, Team
-from football_analysis.preflight import inspect_video
+from football_analysis.jobs import SingleJobGate
+from football_analysis.preflight import MAX_FILE_SIZE_BYTES, inspect_video
 from football_analysis.teams import suggest_team_colors
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -21,6 +23,9 @@ PRIVATE_INPUT = PROJECT_ROOT / "data" / "private" / "input"
 FOOTBALL_MODEL = PROJECT_ROOT / "models" / "yolo-football-player-detection.pt"
 BALL_MODEL = PROJECT_ROOT / "yolo11n.pt"
 PRIVATE_INPUT.mkdir(parents=True, exist_ok=True)
+UPLOAD_DISK_RESERVE_BYTES = 512 * 1024**2
+MAX_RETAINED_JOBS = 16
+STALE_UPLOAD_SECONDS = 7 * 24 * 60 * 60
 
 ANALYSIS_RANGE_COMPONENT = component(
     "analysis_range_selector",
@@ -241,6 +246,8 @@ class Job:
     message: str = "Waiting"
     result: AnalysisResult | None = None
     error: str | None = None
+    created_at: float = field(default_factory=time.time)
+    finished_at: float | None = None
     cancel: threading.Event = field(default_factory=threading.Event)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -248,6 +255,11 @@ class Job:
 @st.cache_resource
 def job_registry() -> dict[str, Job]:
     return {}
+
+
+@st.cache_resource
+def analysis_gate() -> SingleJobGate:
+    return SingleJobGate()
 
 
 @st.cache_resource
@@ -275,23 +287,80 @@ def run_job(job: Job) -> None:
             job.stage = "failed"
             job.error = f"{type(exc).__name__}: {exc}"
             job.message = "Analysis failed"
+    finally:
+        with job.lock:
+            job.finished_at = time.time()
+        analysis_gate().release(job.job_id)
+
+
+def prune_finished_jobs(registry: dict[str, Job]) -> None:
+    terminal = sorted(
+        (job for job in registry.values() if job.finished_at is not None),
+        key=lambda job: job.finished_at or 0.0,
+        reverse=True,
+    )
+    for job in terminal[MAX_RETAINED_JOBS:]:
+        registry.pop(job.job_id, None)
 
 
 def start_job(video_path: Path, config: AnalysisConfig) -> str:
     registry = job_registry()
+    prune_finished_jobs(registry)
     job_id = uuid.uuid4().hex
+    gate = analysis_gate()
+    if not gate.try_acquire(job_id):
+        raise RuntimeError("Another analysis is already running on this local server.")
     job = Job(job_id=job_id, video_path=video_path, config=config)
     registry[job_id] = job
-    threading.Thread(target=run_job, args=(job,), daemon=True, name=f"analysis-{job_id[:8]}").start()
+    try:
+        threading.Thread(
+            target=run_job,
+            args=(job,),
+            daemon=True,
+            name=f"analysis-{job_id[:8]}",
+        ).start()
+    except Exception:
+        registry.pop(job_id, None)
+        gate.release(job_id)
+        raise
     return job_id
 
 
 def save_upload(uploaded_file) -> Path:
+    size = int(uploaded_file.size)
+    if size > MAX_FILE_SIZE_BYTES:
+        raise ValueError(f"Upload is {size / 1024**3:.2f} GB; the limit is 4 GB.")
+    available = shutil.disk_usage(PRIVATE_INPUT).free
+    required = size + UPLOAD_DISK_RESERVE_BYTES
+    if available < required:
+        raise OSError(
+            f"Not enough free disk space. This upload needs {required / 1024**3:.2f} GB "
+            "including a 512 MB safety reserve."
+        )
     suffix = Path(uploaded_file.name).suffix.lower()
     target = PRIVATE_INPUT / f"session-{uuid.uuid4().hex}{suffix}"
-    with target.open("wb") as destination:
-        shutil.copyfileobj(uploaded_file, destination)
+    temporary = target.with_suffix(f"{target.suffix}.part")
+    try:
+        uploaded_file.seek(0)
+        with temporary.open("xb") as destination:
+            shutil.copyfileobj(uploaded_file, destination)
+        temporary.replace(target)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
     return target
+
+
+def remove_stale_uploads() -> None:
+    cutoff = time.time() - STALE_UPLOAD_SECONDS
+    active_paths = {
+        job.video_path.resolve()
+        for job in job_registry().values()
+        if job.finished_at is None
+    }
+    for path in PRIVATE_INPUT.glob("session-*"):
+        if path.is_file() and path.resolve() not in active_paths and path.stat().st_mtime < cutoff:
+            path.unlink(missing_ok=True)
 
 
 def first_frame(path: Path):
@@ -302,14 +371,21 @@ def first_frame(path: Path):
 
 
 def propose_colors(path: Path, model_path: str) -> tuple[str, str] | None:
-    report = inspect_video(path, sample_count=6)
-    if not report.suitable:
-        return None
-    tracker = calibration_tracker(model_path)
-    tracker.reset()
-    samples = [(frame, tracker.track(frame)) for frame in report.sampled_frames]
-    tracker.reset()
-    return suggest_team_colors(samples)
+    owner = f"calibration-{uuid.uuid4().hex}"
+    gate = analysis_gate()
+    if not gate.try_acquire(owner):
+        raise RuntimeError("The local inference worker is already in use.")
+    try:
+        report = inspect_video(path, sample_count=6, retain_sampled_frames=True)
+        if not report.suitable:
+            return None
+        tracker = calibration_tracker(model_path)
+        tracker.reset()
+        samples = [(frame, tracker.track(frame)) for frame in report.sampled_frames]
+        tracker.reset()
+        return suggest_team_colors(samples)
+    finally:
+        gate.release(owner)
 
 
 def format_timestamp(seconds: float) -> str:
@@ -443,9 +519,16 @@ st.caption("Private on-device proof of concept · results are estimates, not off
 
 local_files = sorted(PRIVATE_INPUT.glob("*.mp4"))
 upload = st.file_uploader("Upload a private MP4", type=["mp4"], help="The file stays on this machine.")
-if upload is not None and st.session_state.get("uploaded_name") != upload.name:
-    st.session_state.video_path = str(save_upload(upload))
-    st.session_state.uploaded_name = upload.name
+if upload is not None:
+    upload_identity = (upload.name, upload.size, getattr(upload, "file_id", None))
+    if st.session_state.get("upload_identity") != upload_identity:
+        try:
+            remove_stale_uploads()
+            st.session_state.video_path = str(save_upload(upload))
+            st.session_state.upload_identity = upload_identity
+        except (OSError, ValueError) as exc:
+            st.error(str(exc))
+            st.stop()
 
 if local_files:
     options = {path.name: path for path in local_files}
@@ -468,6 +551,8 @@ if report.metadata:
         f"**{video_path.name}** — {metadata.width}×{metadata.height}, "
         f"{metadata.fps:.2f} FPS, {metadata.duration_seconds:.1f}s"
     )
+    if metadata.duration_seconds > 120:
+        st.caption("Long clips must stay within one match half and keep the same attacking directions.")
 for error in report.errors:
     st.error(error)
 for warning in report.warnings:
@@ -501,7 +586,12 @@ if "team_a_color" not in st.session_state:
     st.session_state.team_b_color = "#1b6ca8"
 
 color_source = f"{video_path.resolve()}::{model_path}"
-if st.session_state.get("color_source") != color_source and Path(model_path).exists():
+calibration_busy = analysis_gate().current_owner() is not None
+if (
+    st.session_state.get("color_source") != color_source
+    and Path(model_path).exists()
+    and not calibration_busy
+):
     with st.spinner("Sampling the clip for initial jersey-color suggestions…"):
         try:
             initial_suggestion = propose_colors(video_path, model_path)
@@ -511,10 +601,19 @@ if st.session_state.get("color_source") != color_source and Path(model_path).exi
         st.session_state.team_a_color, st.session_state.team_b_color = initial_suggestion
     st.session_state.color_source = color_source
 
-if st.button("Suggest jersey colors from the clip"):
+if calibration_busy:
+    st.caption("Jersey-color suggestions are paused while the inference worker is analyzing a clip.")
+if st.button("Suggest jersey colors from the clip", disabled=calibration_busy):
+    suggestion_error = None
     with st.spinner("Loading the local model and sampling player crops…"):
-        suggestion = propose_colors(video_path, model_path)
-    if suggestion:
+        try:
+            suggestion = propose_colors(video_path, model_path)
+        except RuntimeError as exc:
+            suggestion_error = str(exc)
+            suggestion = None
+    if suggestion_error:
+        st.warning(suggestion_error)
+    elif suggestion:
         st.session_state.team_a_color, st.session_state.team_b_color = suggestion
         st.success("Suggested colors are ready; confirm or correct them below.")
     else:
@@ -539,8 +638,16 @@ if team_a_attack == team_b_attack:
 
 active_job_id = st.session_state.get("active_job_id")
 active_job = job_registry().get(active_job_id) if active_job_id else None
+worker_owner = analysis_gate().current_owner()
 if active_job is None or active_job.stage in {"complete", "failed", "cancelled"}:
-    if st.button("Analyze clip", type="primary", width="stretch"):
+    if worker_owner is not None:
+        st.info("Another analysis is using the local inference worker. Wait for it to finish or cancel it.")
+    if st.button(
+        "Analyze clip",
+        type="primary",
+        width="stretch",
+        disabled=worker_owner is not None,
+    ):
         config = AnalysisConfig(
             team_names={Team.A: team_a_name, Team.B: team_b_name},
             team_colors={Team.A: team_a_color, Team.B: team_b_color},
@@ -548,8 +655,12 @@ if active_job is None or active_job.stage in {"complete", "failed", "cancelled"}
             model_path=model_path,
             ball_model_path=ball_model_path or None,
         )
-        st.session_state.active_job_id = start_job(video_path, config)
-        st.rerun()
+        try:
+            st.session_state.active_job_id = start_job(video_path, config)
+        except RuntimeError as exc:
+            st.warning(str(exc))
+        else:
+            st.rerun()
 
 
 @st.fragment(run_every=1.0)

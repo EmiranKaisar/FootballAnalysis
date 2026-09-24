@@ -6,5 +6,6 @@ __pycache__/
 *.py[cod]
 *.pt
 models/manifest.json
-.streamlit/
+.streamlit/*
+!.streamlit/config.toml
 .DS_Store

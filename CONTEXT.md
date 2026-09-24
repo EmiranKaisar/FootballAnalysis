@@ -5,7 +5,7 @@ This context defines the football concepts used by the local video-analysis demo
 ## Language
 
 **Analysis Clip**:
-A continuous live-play segment of no more than two minutes from a fixed or smoothly panning/zooming wide-angle tactical camera, in which most active players, the ball, and enough pitch markings for calibration are normally visible. The demo does not accept cuts, abrupt viewpoint changes, broadcast replays, or close-up edits as analysis clips.
+A continuous live-play segment lasting from 30 seconds through 20 minutes, contained within one match half and one set of attacking directions, from a fixed or smoothly panning/zooming wide-angle tactical camera. Most active players, the ball, and enough pitch markings for calibration are normally visible. The demo does not accept cuts, abrupt viewpoint changes, broadcast replays, close-up edits, halftime, or other attacking-direction changes as part of one analysis clip.
 _Avoid_: Broadcast clip, arbitrary match video
 
 **Clip Preview**:
@@ -89,7 +89,7 @@ The goal toward which a clip team is attacking at the beginning of an analysis c
 _Avoid_: Camera direction, team side
 
 **Analysis Result**:
-The team summary, timestamped estimated-event timeline, measurable-coverage information, and structured exports produced for an analysis clip. It does not include a separately rendered annotated video in the first version.
+The team summary, timestamped estimated-event timeline, and measurable-coverage information produced for an analysis clip. It does not include structured exports or a separately rendered annotated video in the first version.
 _Avoid_: Annotated output video, official match report
 
 **Analysis Session**:
