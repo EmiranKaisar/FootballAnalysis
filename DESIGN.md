@@ -49,6 +49,22 @@ Preflight rejects unreadable files, unsupported formats, invalid metadata, clips
 
 The application samples the source at a target analysis rate and uses replaceable local object trackers for players, goalkeepers, and the ball. User-confirmed jersey appearance classifies temporary player tracks by team. An explicit temporal state machine derives possession intervals and estimated passes and shots.
 
+### Reference models and replacement boundary
+
+The reference configuration uses three upstream artifacts:
+
+- [`martinjolif/yolo-football-player-detection`](https://huggingface.co/martinjolif/yolo-football-player-detection), pinned to revision [`5e83fafa8d564243001ce8e063612a618a138fbe`](https://huggingface.co/martinjolif/yolo-football-player-detection/tree/5e83fafa8d564243001ce8e063612a618a138fbe), for football-specific player, goalkeeper, referee, and fallback ball observations;
+- the official [`yolo11n.pt` model from the Ultralytics assets v8.3.0 release](https://github.com/ultralytics/assets/releases/tag/v8.3.0) for supplementary generic person and sports-ball coverage; and
+- the [`ultralytics/ultralytics`](https://github.com/ultralytics/ultralytics) runtime for local inference and ByteTrack-based tracking.
+
+These models are replaceable reference defaults. The interface accepts an alternative local Ultralytics-compatible primary model and an optional secondary ball/coverage model. A one-model configuration must cover every analysis object it intends to provide. In the two-model configuration, the primary model provides football-specific roles while the secondary model provides generic person and ball coverage.
+
+The canonical tracker output consists of a stable track ID, canonical object label, confidence score, and pixel-space `(x1, y1, x2, y2)` bounding box. Accepted label aliases normalize to **player**, **goalkeeper**, **ball**, or **official**. Unrecognized classes are ignored, and team assignment remains a separate jersey-color classification step.
+
+An inference runtime other than Ultralytics is replaceable behind the `ObjectTracker` boundary but is not selectable from the current interface. Such a provider must adapt its detections and tracking state to the canonical tracker output. The analyzer accepts an injected tracker so alternative providers can be tested independently before interface-level provider selection is added.
+
+The default downloader owns only the two pinned reference filenames and restores them when their checksums differ. Custom weights use distinct filenames and remain the responsibility of the user. Every replacement model and runtime retains its own license; the project's MIT license does not relicense third-party artifacts.
+
 The completed full-clip result retains:
 
 - clip-relative event timestamps;
@@ -158,6 +174,15 @@ After initial model setup, inference and video processing occur locally. Uploade
 - No video player or event-review selector appears before or after analysis.
 - Estimated events remain inspectable as clip-relative timestamps in the timeline.
 - Failure to decode the opening frame shows a concise warning and does not block an otherwise suitable clip.
+
+## Acceptance criteria for model replacement
+
+- A user can select an alternative compatible Ultralytics model by local path without modifying application code.
+- A one-model configuration works when the selected model supplies the required canonical objects.
+- A two-model configuration distinguishes the football-role model from the supplementary generic player/ball model.
+- Unsupported class names are ignored rather than silently mapped to an unrelated analysis object.
+- A non-Ultralytics provider can be tested by injecting an `ObjectTracker` implementation that returns the canonical tracker output.
+- Documentation identifies the exact reference repositories, pinned model revision or release, replacement contract, and third-party licensing boundary.
 
 ## Related domain and architecture documents
 

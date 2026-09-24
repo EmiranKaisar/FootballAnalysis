@@ -51,6 +51,39 @@ The single model-download command fetches both required checkpoints:
 
 The downloader pins immutable model releases, verifies their SHA-256 checksums, reuses valid existing files, and records local provenance in `models/manifest.json`. Model weights and the generated manifest are ignored by Git. After the first successful download, analysis does not require internet access.
 
+### Referenced models and repositories
+
+The default configuration references:
+
+- [`martinjolif/yolo-football-player-detection`](https://huggingface.co/martinjolif/yolo-football-player-detection) for football-specific player, goalkeeper, referee, and ball classes. The downloader pins model revision [`5e83fafa8d564243001ce8e063612a618a138fbe`](https://huggingface.co/martinjolif/yolo-football-player-detection/tree/5e83fafa8d564243001ce8e063612a618a138fbe).
+- The official [`yolo11n.pt` checkpoint from the Ultralytics assets v8.3.0 release](https://github.com/ultralytics/assets/releases/tag/v8.3.0) for supplementary generic person and sports-ball coverage.
+- The [`ultralytics/ultralytics`](https://github.com/ultralytics/ultralytics) repository and Python package for YOLO inference and ByteTrack-based tracking.
+
+These are reference defaults, not a requirement that every installation use the same trained weights.
+
+### Using alternative models
+
+An alternative Ultralytics-compatible model can be used without changing application code:
+
+1. Store the custom weights under a different local filename, such as `models/custom-football-model.pt`.
+2. Start the app and enter that path in **Local model path**.
+3. Either leave **Local ball model path** empty and use one model that covers all required objects, or provide a second compatible model for generic player and ball coverage.
+
+Do not overwrite the two default model files. Running `python scripts/download_models.py` verifies their pinned checksums and restores a default file whose contents do not match.
+
+Compatible models must provide bounding boxes and confidence scores. Ultralytics supplies stable ByteTrack IDs across frames. Model class names are normalized as follows:
+
+| Analysis object | Accepted model class names |
+| --- | --- |
+| Player | `person`, `player` |
+| Goalkeeper | `goalkeeper`, `goal keeper` |
+| Ball | `ball`, `football`, `sports ball`, `soccer ball` |
+| Official | `referee`, `official`, `linesman` |
+
+Other classes are ignored. Team identity does not need to be part of the detector; the application classifies detected player crops using the user-confirmed jersey colors.
+
+A model served through another runtime, such as ONNX Runtime or TorchVision, requires a small adapter implementing the `ObjectTracker` protocol in `src/football_analysis/detection.py`. Its `track(frame)` method must return `TrackedObject` values with a stable track ID, one of the canonical labels above, a confidence score, and an `(x1, y1, x2, y2)` pixel bounding box. `analyze_video()` accepts an injected tracker for testing, but selecting a non-Ultralytics backend from the interface requires additional provider wiring.
+
 The environment check confirms Python, installed packages, both model files, and the analysis device. CPU operation is supported; compatible Macs may report Metal (MPS), while a compatible Windows PyTorch installation may report CUDA.
 
 Both detectors are isolated behind a replaceable interface.
@@ -83,4 +116,4 @@ pytest
 
 ## License
 
-Original project code is available under the [MIT License](./LICENSE). Third-party packages and model weights keep their respective licenses and are not relicensed by this project. In particular, the current Ultralytics runtime and YOLO model weights are distributed under AGPL-3.0 terms by their maintainers. Review those terms before redistribution, proprietary use, or commercial use.
+Original project code is available under the [MIT License](./LICENSE). Third-party packages, replacement models, and default model weights keep their respective licenses and are not relicensed by this project. The referenced football model declares AGPL-3.0, and Ultralytics offers its runtime and YOLO models under AGPL-3.0 or separate enterprise terms. Review the license of every selected model and runtime before redistribution, proprietary use, or commercial use.
