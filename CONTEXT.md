@@ -8,9 +8,9 @@ This context defines the football concepts used by the local video-analysis demo
 A continuous live-play segment lasting from 30 seconds through 20 minutes, contained within one match half and one set of attacking directions, from a fixed or smoothly panning/zooming wide-angle tactical camera. Most active players, the ball, and enough pitch markings for calibration are normally visible. The demo does not accept cuts, abrupt viewpoint changes, broadcast replays, close-up edits, halftime, or other attacking-direction changes as part of one analysis clip.
 _Avoid_: Broadcast clip, arbitrary match video
 
-**Clip Preview**:
-A single small, static image of the analysis clip's opening frame, shown after preflight so the user can confirm the selected clip without playing it.
-_Avoid_: Video preview, preview player, event-review player
+**Analysis Video Player**:
+The in-app playback view for the complete Analysis Clip, used to watch the source and review timestamped events. Playback remains available across the full clip regardless of the selected Analysis Range.
+_Avoid_: Clip preview, playback range
 
 **Team-Level Analysis**:
 Statistics and timestamped events attributed to one of the two teams without asserting a real-world player identity. Temporary tracks may support classification but are not part of the promised result.
@@ -71,6 +71,10 @@ _Avoid_: Model confidence
 **Estimated Event**:
 A timestamped football event inferred from the visible evidence in an analysis clip and accompanied by a confidence level. It is inspectable evidence from a proof of concept, not an official match record.
 _Avoid_: Official event, verified event
+
+**Selected Event**:
+An Estimated Event chosen from the Events list for review. Selecting it seeks the Analysis Video Player to its clip-relative timestamp and pauses playback without changing the Analysis Range.
+_Avoid_: Active event, playback event
 
 **Evidence Score**:
 A zero-to-one relative indication of how strongly the prototype's visible rule evidence supports an estimated event. It is useful for review and ranking, but it is not a calibrated probability or an accuracy guarantee.

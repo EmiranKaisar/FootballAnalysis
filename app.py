@@ -7,7 +7,6 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import cv2
 import streamlit as st
 from streamlit.components.v2 import component
 
@@ -17,6 +16,7 @@ from football_analysis.domain import AnalysisResult, Team
 from football_analysis.jobs import SingleJobGate
 from football_analysis.preflight import MAX_FILE_SIZE_BYTES, inspect_video
 from football_analysis.teams import suggest_team_colors
+from football_analysis.video_stream import LocalVideoServer
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 PRIVATE_INPUT = PROJECT_ROOT / "data" / "private" / "input"
@@ -235,6 +235,40 @@ ANALYSIS_RANGE_COMPONENT = component(
     """,
 )
 
+ANALYSIS_VIDEO_COMPONENT = component(
+    "analysis_video_player",
+    html="""
+        <video controls preload="metadata" playsinline aria-label="Analysis video player"></video>
+        <p class="video-error" role="alert" hidden>
+            Video playback unavailable. Local analysis and reports remain available.
+        </p>
+    """,
+    css="""
+        video { display: block; width: 100%; max-height: 70vh; background: #111; }
+        .video-error { margin: 0.5rem 0; color: var(--st-text-color); }
+    """,
+    js="""
+        export default function({ data, parentElement }) {
+            const video = parentElement.querySelector('video');
+            const error = parentElement.querySelector('.video-error');
+            video.onerror = () => { error.hidden = false; };
+            video.onloadedmetadata = () => { error.hidden = true; };
+            if (video.dataset.source !== data.src) {
+                video.dataset.source = data.src;
+                video.src = data.src;
+                error.hidden = true;
+            }
+            if (data.seekId && video.dataset.seekId !== data.seekId) {
+                video.dataset.seekId = data.seekId;
+                video.pause();
+                const seek = () => { video.currentTime = data.seekSeconds; video.pause(); };
+                if (video.readyState >= HTMLMediaElement.HAVE_METADATA) seek();
+                else video.addEventListener('loadedmetadata', seek, { once: true });
+            }
+        }
+    """,
+)
+
 
 @dataclass
 class Job:
@@ -260,6 +294,11 @@ def job_registry() -> dict[str, Job]:
 @st.cache_resource
 def analysis_gate() -> SingleJobGate:
     return SingleJobGate()
+
+
+@st.cache_resource
+def video_server() -> LocalVideoServer:
+    return LocalVideoServer(PRIVATE_INPUT)
 
 
 @st.cache_resource
@@ -363,13 +402,6 @@ def remove_stale_uploads() -> None:
             path.unlink(missing_ok=True)
 
 
-def first_frame(path: Path):
-    capture = cv2.VideoCapture(str(path))
-    ok, frame = capture.read()
-    capture.release()
-    return frame if ok else None
-
-
 def propose_colors(path: Path, model_path: str) -> tuple[str, str] | None:
     owner = f"calibration-{uuid.uuid4().hex}"
     gate = analysis_gate()
@@ -417,8 +449,8 @@ def reset_analysis_range(widget_key: str, options: tuple[float, ...]) -> None:
 
 def render_result(result: AnalysisResult) -> None:
     st.success("Estimated analysis complete")
-    st.header(
-        "Analysis report · "
+    st.subheader("Analysis report")
+    st.caption(
         f"{format_timestamp(result.range_start_seconds)}–{format_timestamp(result.selected_end_seconds)} "
         f"({result.selected_duration_seconds:.1f}s)"
     )
@@ -429,26 +461,18 @@ def render_result(result: AnalysisResult) -> None:
         f"Measurable possession coverage: {result.measurable_coverage_percent:.1f}% · "
         f"Analyzed frames: {result.analyzed_frames:,}"
     )
-    columns = st.columns(2)
-    for column, team in zip(columns, (Team.A, Team.B)):
+    for team in (Team.A, Team.B):
         summary = result.team_summary(team)
-        with column:
+        with st.container(border=True):
             st.subheader(summary["team"])
-            first, second, third = st.columns(3)
+            first, second = st.columns(2)
             first.metric("Shots", summary["shots"])
             second.metric("On target", summary["shots_on_target"])
             possession = summary["possession_percent"]
-            third.metric("Possession", "N/A" if possession is None else f"{possession:.1f}%")
             first, second = st.columns(2)
-            first.metric("Passes", summary["passes"])
-            second.metric("Pass success", f'{summary["pass_success_percent"]:.1f}%')
-
-    rows = [event.as_dict(result.team_names) for event in result.events]
-    st.subheader("Estimated event timeline")
-    if rows:
-        st.table(rows)
-    else:
-        st.info("No events met the conservative detection rules in this clip.")
+            first.metric("Possession", "N/A" if possession is None else f"{possession:.1f}%")
+            second.metric("Passes", summary["passes"])
+            st.metric("Pass success", f'{summary["pass_success_percent"]:.1f}%')
 
     if result.measurable_seconds == 0:
         st.info("This interval lacks sufficient visible evidence to measure possession.")
@@ -458,29 +482,11 @@ def render_analysis_range_selector(
     widget_key: str,
     options: tuple[float, ...],
 ) -> None:
-    st.markdown(
-        """
-        <style>
-        .st-key-analysis_range_selector {
-            position: sticky;
-            bottom: 0.75rem;
-            z-index: 50;
-            padding: 0.75rem 1rem 0.25rem;
-            border: 1px solid color-mix(in srgb, var(--primary-color) 35%, transparent);
-            border-radius: 0.75rem;
-            background: color-mix(in srgb, var(--background-color) 94%, transparent);
-            backdrop-filter: blur(10px);
-            box-shadow: 0 0.35rem 1.25rem rgba(0, 0, 0, 0.14);
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-    with st.container(key="analysis_range_selector"):
+    with st.container(key="analysis_range_selector", border=True):
         st.subheader("Analysis range")
         st.caption(
-            "Drag either boundary to filter the cached full-clip report. "
-            "The video is not reanalyzed or seeked. Minimum range: 30 seconds."
+            "Drag either boundary to filter the cached report and Events list. "
+            "Playback stays on the full clip. Minimum range: 30 seconds."
         )
         start_seconds, end_seconds = st.session_state[widget_key]
         generation = st.session_state.get(f"{widget_key}_generation", 0)
@@ -551,8 +557,6 @@ if report.metadata:
         f"**{video_path.name}** — {metadata.width}×{metadata.height}, "
         f"{metadata.fps:.2f} FPS, {metadata.duration_seconds:.1f}s"
     )
-    if metadata.duration_seconds > 120:
-        st.caption("Long clips must stay within one match half and keep the same attacking directions.")
 for error in report.errors:
     st.error(error)
 for warning in report.warnings:
@@ -560,124 +564,135 @@ for warning in report.warnings:
 if not report.suitable:
     st.stop()
 
-frame = first_frame(video_path)
-if frame is not None:
-    st.image(
-        cv2.cvtColor(frame, cv2.COLOR_BGR2RGB),
-        caption=f"{video_path.name} · opening frame",
-        width=360,
-    )
-else:
-    st.warning("Opening-frame preview unavailable. You can continue with calibration and analysis.")
-
-st.header("Calibration")
-model_path = st.text_input(
-    "Local model path",
-    value=str(FOOTBALL_MODEL if FOOTBALL_MODEL.exists() else "yolo11n.pt"),
-    help="Run scripts/download_models.py first. The generic fallback is useful only for checking the UI.",
-)
-ball_model_path = st.text_input(
-    "Local ball model path",
-    value=str(BALL_MODEL) if BALL_MODEL.exists() else "",
-    help="The COCO model detects this clip's visible ball better than the current specialist checkpoint.",
-)
-if "team_a_color" not in st.session_state:
-    st.session_state.team_a_color = "#d7263d"
-    st.session_state.team_b_color = "#1b6ca8"
-
-color_source = f"{video_path.resolve()}::{model_path}"
-calibration_busy = analysis_gate().current_owner() is not None
-if (
-    st.session_state.get("color_source") != color_source
-    and Path(model_path).exists()
-    and not calibration_busy
-):
-    with st.spinner("Sampling the clip for initial jersey-color suggestions…"):
-        try:
-            initial_suggestion = propose_colors(video_path, model_path)
-        except Exception:
-            initial_suggestion = None
-    if initial_suggestion:
-        st.session_state.team_a_color, st.session_state.team_b_color = initial_suggestion
-    st.session_state.color_source = color_source
-
-if calibration_busy:
-    st.caption("Jersey-color suggestions are paused while the inference worker is analyzing a clip.")
-if st.button("Suggest jersey colors from the clip", disabled=calibration_busy):
-    suggestion_error = None
-    with st.spinner("Loading the local model and sampling player crops…"):
-        try:
-            suggestion = propose_colors(video_path, model_path)
-        except RuntimeError as exc:
-            suggestion_error = str(exc)
-            suggestion = None
-    if suggestion_error:
-        st.warning(suggestion_error)
-    elif suggestion:
-        st.session_state.team_a_color, st.session_state.team_b_color = suggestion
-        st.success("Suggested colors are ready; confirm or correct them below.")
-    else:
-        st.warning("Not enough player crops were found. Choose the colors manually.")
-
-left, right = st.columns(2)
-with left:
-    team_a_name = st.text_input("Team A name", "Team A")
-    team_a_color = st.color_picker("Team A jersey color", st.session_state.team_a_color)
-    team_a_attack = st.selectbox("Team A attacks", ["right", "left"])
-with right:
-    team_b_name = st.text_input("Team B name", "Team B")
-    team_b_color = st.color_picker("Team B jersey color", st.session_state.team_b_color)
-    team_b_attack = st.selectbox("Team B attacks", ["left", "right"])
-
-if team_a_color.lower() == team_b_color.lower():
-    st.error("The two confirmed jersey colors must differ.")
-    st.stop()
-if team_a_attack == team_b_attack:
-    st.error("The teams must attack opposite goals.")
-    st.stop()
+video_source = str(video_path.resolve())
+if st.session_state.get("video_source") != video_source:
+    st.session_state.video_source = video_source
+    st.session_state.active_job_id = None
+    st.session_state.selected_event = None
+    st.session_state.seek_request = None
 
 active_job_id = st.session_state.get("active_job_id")
 active_job = job_registry().get(active_job_id) if active_job_id else None
-worker_owner = analysis_gate().current_owner()
-if active_job is None or active_job.stage in {"complete", "failed", "cancelled"}:
-    if worker_owner is not None:
-        st.info("Another analysis is using the local inference worker. Wait for it to finish or cancel it.")
-    if st.button(
-        "Analyze clip",
-        type="primary",
-        width="stretch",
-        disabled=worker_owner is not None,
-    ):
-        config = AnalysisConfig(
-            team_names={Team.A: team_a_name, Team.B: team_b_name},
-            team_colors={Team.A: team_a_color, Team.B: team_b_color},
-            attacks={Team.A: team_a_attack, Team.B: team_b_attack},
-            model_path=model_path,
-            ball_model_path=ball_model_path or None,
+if active_job is not None and active_job.video_path != video_path:
+    active_job = None
+result = active_job.result if active_job is not None else None
+filtered_result = None
+if result is not None:
+    range_key, range_options = initialize_analysis_range(result, active_job.job_id)
+    range_start, range_end = st.session_state[range_key]
+    filtered_result = result.filtered(range_start, range_end)
+    if st.session_state.selected_event not in filtered_result.events:
+        st.session_state.selected_event = None
+
+player_column, panel_column = st.columns([2.3, 1], gap="large")
+with player_column:
+    st.subheader("Analysis video")
+    try:
+        video_url = video_server().url_for(video_path)
+    except (OSError, ValueError):
+        st.warning("Video playback unavailable. Local analysis and reports remain available.")
+    else:
+        seek_request = st.session_state.get("seek_request") or {}
+        ANALYSIS_VIDEO_COMPONENT(
+            key=f"player_{video_source}",
+            data={
+                "src": video_url,
+                "seekId": seek_request.get("id"),
+                "seekSeconds": seek_request.get("seconds"),
+            },
         )
-        try:
-            st.session_state.active_job_id = start_job(video_path, config)
-        except RuntimeError as exc:
-            st.warning(str(exc))
-        else:
-            st.rerun()
+    if result is not None:
+        render_analysis_range_selector(range_key, range_options)
+
+    with st.expander("Clip Setup", expanded=False):
+        model_path = st.text_input(
+            "Local model path",
+            value=str(FOOTBALL_MODEL if FOOTBALL_MODEL.exists() else "yolo11n.pt"),
+            help="Run scripts/download_models.py first. The generic fallback is useful only for checking the UI.",
+        )
+        ball_model_path = st.text_input(
+            "Local ball model path",
+            value=str(BALL_MODEL) if BALL_MODEL.exists() else "",
+            help="The COCO model detects this clip's visible ball better than the current specialist checkpoint.",
+        )
+        if "team_a_color" not in st.session_state:
+            st.session_state.team_a_color = "#d7263d"
+            st.session_state.team_b_color = "#1b6ca8"
+
+        worker_owner = analysis_gate().current_owner()
+        if worker_owner is not None:
+            st.caption("Jersey-color suggestions are paused while the inference worker is in use.")
+        if st.button("Suggest jersey colors from the clip", disabled=worker_owner is not None):
+            suggestion_error = None
+            with st.spinner("Loading the local model and sampling player crops…"):
+                try:
+                    suggestion = propose_colors(video_path, model_path)
+                except RuntimeError as exc:
+                    suggestion_error = str(exc)
+                    suggestion = None
+            if suggestion_error:
+                st.warning(suggestion_error)
+            elif suggestion:
+                st.session_state.team_a_color, st.session_state.team_b_color = suggestion
+                st.success("Suggested colors are ready; confirm or correct them below.")
+            else:
+                st.warning("Not enough player crops were found. Choose the colors manually.")
+
+        left, right = st.columns(2)
+        with left:
+            team_a_name = st.text_input("Team A name", "Team A")
+            team_a_color = st.color_picker("Team A jersey color", st.session_state.team_a_color)
+            team_a_attack = st.selectbox("Team A attacks", ["right", "left"])
+        with right:
+            team_b_name = st.text_input("Team B name", "Team B")
+            team_b_color = st.color_picker("Team B jersey color", st.session_state.team_b_color)
+            team_b_attack = st.selectbox("Team B attacks", ["left", "right"])
+
+        valid_teams = True
+        if team_a_color.lower() == team_b_color.lower():
+            st.error("The two confirmed jersey colors must differ.")
+            valid_teams = False
+        if team_a_attack == team_b_attack:
+            st.error("The teams must attack opposite goals.")
+            valid_teams = False
+
+        if active_job is None or active_job.stage in {"complete", "failed", "cancelled"}:
+            if worker_owner is not None:
+                st.info("Another analysis is using the local inference worker. Wait for it to finish.")
+            if st.button(
+                "Analyze clip",
+                type="primary",
+                width="stretch",
+                disabled=worker_owner is not None or not valid_teams,
+            ):
+                config = AnalysisConfig(
+                    team_names={Team.A: team_a_name, Team.B: team_b_name},
+                    team_colors={Team.A: team_a_color, Team.B: team_b_color},
+                    attacks={Team.A: team_a_attack, Team.B: team_b_attack},
+                    model_path=model_path,
+                    ball_model_path=ball_model_path or None,
+                )
+                try:
+                    st.session_state.active_job_id = start_job(video_path, config)
+                except RuntimeError as exc:
+                    st.warning(str(exc))
+                else:
+                    st.session_state.selected_event = None
+                    st.session_state.seek_request = None
+                    st.rerun()
 
 
 @st.fragment(run_every=1.0)
-def job_panel() -> None:
-    job_id = st.session_state.get("active_job_id")
-    job = job_registry().get(job_id) if job_id else None
+def running_job_panel(job_id: str) -> None:
+    job = job_registry().get(job_id)
     if job is None:
+        st.info("No analysis has been started for this clip.")
         return
     with job.lock:
         stage, value, message = job.stage, job.progress, job.message
-        result, error = job.result, job.error
-    if result is not None:
-        widget_key, options = initialize_analysis_range(result, job.job_id)
-        start_seconds, end_seconds = st.session_state[widget_key]
-        filtered_result = result.filtered(start_seconds, end_seconds)
-        render_result(filtered_result)
-        render_analysis_range_selector(widget_key, options)
+        finished_result, error = job.result, job.error
+    if finished_result is not None:
+        st.rerun()
     elif stage == "failed":
         st.error(error or "Analysis failed")
     elif stage == "cancelled":
@@ -689,4 +704,47 @@ def job_panel() -> None:
             st.warning("Cancellation requested; the current model frame will finish first.")
 
 
-job_panel()
+with panel_column:
+    analysis_tab, events_tab = st.tabs(
+        ["Analysis", "Events"], key=f"workspace_tabs_{video_source}", on_change="rerun"
+    )
+    with analysis_tab:
+        if filtered_result is not None:
+            render_result(filtered_result)
+        elif active_job is not None:
+            running_job_panel(active_job.job_id)
+        else:
+            st.info("Set up the teams and analyze the clip to see its statistics.")
+
+    with events_tab:
+        if filtered_result is None:
+            st.info("Estimated events will appear after analysis completes.")
+        elif not filtered_result.events:
+            st.info("No events met the conservative detection rules in this range.")
+        else:
+            st.caption(f"{len(filtered_result.events)} estimated events in the selected range")
+            for event in sorted(filtered_result.events, key=lambda item: item.timestamp_seconds):
+                selected = st.session_state.selected_event is event
+                label = (
+                    f"{format_timestamp(event.timestamp_seconds)} · "
+                    f"{event.event_type.value.title()} · {result.team_names[event.team]} · "
+                    f"{event.outcome.value.replace('_', ' ').title()}"
+                )
+                if selected:
+                    label = f"✓ {label} · selected"
+                if st.button(
+                    label,
+                    key=f"event_{active_job.job_id}_{id(event)}",
+                    type="primary" if selected else "secondary",
+                    width="stretch",
+                ):
+                    st.session_state.selected_event = event
+                    reference_time = min(
+                        result.analyzed_timestamps or [event.timestamp_seconds],
+                        key=lambda timestamp: abs(timestamp - event.timestamp_seconds),
+                    )
+                    st.session_state.seek_request = {
+                        "id": uuid.uuid4().hex,
+                        "seconds": reference_time,
+                    }
+                    st.rerun()

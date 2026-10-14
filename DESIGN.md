@@ -42,13 +42,13 @@ Preflight rejects unreadable files, unsupported formats, invalid metadata, clips
 
 1. The user uploads a private MP4 or chooses one from the local private-input folder.
 2. The product inspects the clip and reports errors or warnings.
-3. The user confirms the selected clip from a compact static opening-frame preview and calibrates the two teams:
+3. After a successful preflight, the Analysis Workspace opens with the selected clip in the central video player and a right-side panel. The user opens the collapsible Clip Setup section below the player to calibrate the two teams:
    - confirms a name and jersey color for each team;
    - confirms opposite attacking directions; and
    - optionally accepts locally generated jersey-color suggestions.
-4. The user starts analysis. The application processes the entire clip once, showing elapsed clip time, logical work-unit progress, measured throughput, device, estimated time remaining, and a cancellation control.
-5. The completed Analysis Report presents team metrics, quality information, and a timestamped estimated-event timeline.
-6. An Analysis Range Selector below the report lets the user derive a filtered report from cached, time-indexed full-clip evidence. Moving the selector never reruns inference and never seeks the video.
+4. The user starts analysis from Clip Setup. The application processes the entire clip once and shows elapsed clip time, logical work-unit progress, measured throughput, device, estimated time remaining, and a cancellation control in the Analysis tab.
+5. On completion, the Analysis tab presents the two teams' metrics and quality information; the Events tab presents the timestamped estimated events. Selecting an event seeks the player to its reference frame, pauses playback, and marks the event selected.
+6. The Analysis Range control appears directly below the video controls. It filters the completed analysis and Events list from cached, time-indexed full-clip evidence. Changing the range never reruns inference or seeks the player.
 
 ## Analysis behavior
 
@@ -101,37 +101,36 @@ The completed full-clip result retains:
 
 This time-indexed evidence is the only source for range-filtered reports. Range selection does not invoke detection, tracking, or event inference again.
 
-## Analysis Report
+## Analysis Workspace
 
-The report heading identifies its clip-relative start, end, and selected duration. The report contains:
+After preflight succeeds, the workspace presents the Analysis Video Player in the main area and a right-side panel. On wide screens, the player is centered in the main column beside the panel. On narrow screens, the player appears above the panel; the panel retains the same tabs and content.
 
-- measurable possession coverage and analyzed-frame count;
-- per-team shots and shots on target;
-- per-team passes and pass-success rate;
-- per-team possession rate; and
-- a timestamped estimated-event timeline.
+The right-side panel has two tabs:
 
-The timeline is the complete event-review interface in this version. It does not include an event selector, event-specific image, or video player.
+- **Analysis** is the initial tab. While analysis is running, it shows job progress and cancellation. After completion, it shows the Analysis Report: measurable possession coverage, analyzed-frame count, quality warnings, and metric cards for both teams (shots, shots on target, passes, pass-success rate, and possession rate).
+- **Events** shows estimated events in chronological order. Each selectable event identifies its clip-relative timestamp, event type, team, and outcome. Before results are available, the tab shows an empty or not-yet-analyzed state.
 
-For a filtered report, event counts include only events within the Analysis Range. Duration-based metrics clip eligibility and possession intervals at the range boundaries and recompute their values from the overlapping durations.
+Selecting an event seeks to its source-video reference frame, pauses playback, and marks that event as selected. If its timestamp does not match an analyzed-frame timestamp, the nearest analyzed frame is used. Selecting an event does not change the Analysis Range. Playback remains available over the full Analysis Clip even when the Analysis Range is shorter.
 
-When no event meets the conservative evidence rules, the timeline explains that no qualifying event was found. When no measurable possession exists in the selected range, each team's possession is shown as **N/A**, coverage is `0.0%`, event counts remain valid, and the report explains that the interval lacks sufficient visible evidence.
+The completed Analysis Report heading identifies the Analysis Range start, end, and selected duration. If no event meets the conservative evidence rules, the Events tab explains that no qualifying event was found. If no measurable possession exists in the selected range, each team's possession is shown as **N/A**, coverage is `0.0%`, event counts remain valid, and the Analysis tab explains that the interval lacks sufficient visible evidence.
 
-## Clip Preview
+## Analysis Video Player
 
-The interface contains exactly one Clip Preview. It is a left-aligned static image of the Analysis Clip's opening frame, positioned after preflight metadata, errors, and warnings and before Calibration. It is not a video player and has a maximum displayed width of approximately 360 pixels so it does not compete visually with the Analysis Report. It remains visible throughout the temporary Analysis Session so the clip associated with the report stays identifiable. Its caption follows `<filename> · opening frame`. The user may expand the still image to fullscreen for inspection, but the preview provides no playback behavior or playback controls.
+The Analysis Video Player displays the selected local Analysis Clip in the main workspace after preflight succeeds and remains associated with the Analysis Session. It supports ordinary playback and seeking across the complete clip. Seeking the video does not change the Analysis Range or the displayed metrics. The player uses the local clip and does not upload video to a remote service.
 
-If the opening frame cannot be decoded despite otherwise successful preflight, the preview area is omitted and a concise **Opening-frame preview unavailable** warning is shown. This preview failure does not block Calibration or analysis.
+Clip selection and preflight remain before the workspace. Team names, jersey colors, and attacking directions are in a compact, collapsible **Clip Setup** section below the player. The user can confirm color suggestions and start analysis there. After analysis completes, the Analysis Range control takes the position immediately below the playback controls; Clip Setup remains available below it in its collapsed state.
+
+If the browser cannot play the selected clip despite successful preflight, the player shows a concise **Video playback unavailable** message. This does not block local analysis or access to the Analysis and Events tabs.
 
 ## Analysis Range Selector
 
 ### Placement and presentation
 
-The selector appears only after full-clip analysis completes. Its document position is beneath the Analysis Report, and it remains sticky at the bottom of the viewport while the report is being viewed.
+The selector appears only after full-clip analysis completes. It is directly below the Analysis Video Player's playback controls and visually distinct from the player's seek bar. It is not sticky to the viewport. The collapsed Clip Setup section follows it.
 
 It resembles a video progress bar but is not a playback control. Two draggable handles define the selected interval. The segment between them uses the product accent color; excluded segments are visually muted. A clip-relative `MM:SS.s` timestamp remains visible above each handle, with the active handle emphasized during dragging.
 
-The report heading uses the same timestamp format and also shows selected duration.
+The Analysis Report heading uses the same timestamp format and also shows selected duration.
 
 ### Initial and reset state
 
@@ -146,7 +145,7 @@ The report heading uses the same timestamp format and also shows selected durati
 - Handles cannot cross.
 - The selected duration must be at least 30 seconds.
 - Handle timestamps update continuously while dragging.
-- The report updates immediately when the handle is released, avoiding a model rerun and avoiding expensive report reconstruction during pointer movement.
+- The Analysis tab and Events list update when the handle is released, without a model rerun or expensive report reconstruction during pointer movement.
 - Dragging a handle does not seek or otherwise change video playback.
 - Each handle is keyboard-focusable. Left and Right move one analyzed-frame step; Shift+Left and Shift+Right move one second while respecting the clip boundary and minimum duration.
 - Accessible handle names announce whether the boundary is the start or end, its current timestamp, and the 30-second constraint.
@@ -157,9 +156,9 @@ The Analysis Range is start-inclusive and end-exclusive: `[start, end)`. When th
 
 ## Report filtering
 
-On handle release, every visible report value is derived for the selected range:
+On handle release, the Analysis tab and Events list are derived for the selected range:
 
-- shots, shots on target, passes, pass outcomes, and the event timeline are filtered by event timestamp;
+- shots, shots on target, passes, pass outcomes, and visible Events list entries are filtered by event timestamp;
 - possession and measurable coverage are recomputed from overlapping cached intervals;
 - analyzed-frame count includes cached analyzed-frame timestamps within the boundary rule; and
 - warnings remain visible because they qualify the underlying full-clip evidence.
@@ -177,6 +176,7 @@ After initial model setup, inference and video processing occur locally. Uploade
 ## Accessibility and interaction quality
 
 - Pointer use is not required for range adjustment.
+- The Analysis and Events tabs, event list, and event selection are keyboard-operable; selected-event state is conveyed without relying on color alone.
 - Focus state and selected/excluded track regions have distinguishable visual treatment.
 - Timestamp labels do not rely on color alone.
 - Status, validation, empty-evidence, cancellation, and failure messages use text.
@@ -184,8 +184,8 @@ After initial model setup, inference and video processing occur locally. Uploade
 
 ## Acceptance criteria for range filtering
 
-- Completing analysis of a valid clip shows the full-clip report and a full-span selector beneath it.
-- Selecting a valid range updates every report output on handle release without calling the analyzer again.
+- Completing analysis of a valid clip shows full-clip metrics in the Analysis tab and a full-span selector directly below the player controls.
+- Selecting a valid range updates the Analysis tab and Events list on handle release without calling the analyzer again or changing player position.
 - An event on the start boundary is included; an event on an internal end boundary is excluded.
 - Possession intervals crossing either boundary contribute only their overlapping duration.
 - The handles cannot produce a range shorter than 30 seconds or cross each other.
@@ -195,11 +195,12 @@ After initial model setup, inference and video processing occur locally. Uploade
 
 ## Acceptance criteria for clip presentation
 
-- Exactly one Clip Preview appears for a successfully decoded Analysis Clip.
-- The preview is a left-aligned opening-frame still no wider than approximately 360 pixels and is captioned with the filename.
-- No video player or event-review selector appears before or after analysis.
-- Estimated events remain inspectable as clip-relative timestamps in the timeline.
-- Failure to decode the opening frame shows a concise warning and does not block an otherwise suitable clip.
+- After successful preflight, the workspace shows the Analysis Video Player beside the Analysis/Events panel on a wide window and stacks the player above the panel on a narrow window.
+- The Analysis and Events tabs remain available before results; after completion, Analysis shows both teams' metrics and Events lists estimated events chronologically.
+- Each event identifies its clip-relative timestamp, type, team, and outcome; selecting it seeks to the reference frame, pauses playback, and visibly marks the selected event.
+- The player remains seekable across the full clip regardless of the Analysis Range; selecting an event does not alter that range.
+- Clip Setup is available in a compact, collapsible section below the player. After analysis completes, the Analysis Range sits between the player controls and collapsed Clip Setup.
+- If browser playback is unavailable, a concise warning appears while local analysis and both tabs remain usable.
 
 ## Acceptance criteria for model replacement
 
